@@ -19,8 +19,9 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from mindnlp.transformers.models.tapas import TapasTokenizer
+
 from mindnlp.transformers.models.tapas.configuration_tapas import TapasConfig
+
 
 from mindnlp.transformers import (
     MODEL_FOR_CAUSAL_LM_MAPPING,
@@ -31,10 +32,10 @@ from mindnlp.transformers import (
     MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING,
     MODEL_FOR_TABLE_QUESTION_ANSWERING_MAPPING,
     MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING,
-    is_mindspore_available,
+    TapasTokenizer,
 )
 from mindnlp.transformers.models.auto import get_values
-from mindnlp.utils.testing_utils import  require_mindspore, slow
+from mindnlp.utils.testing_utils import  require_mindspore, slow,is_mindspore_available
 from mindnlp.utils import cached_property
 
 from ...test_configuration_common import ConfigTester

@@ -28,3 +28,4 @@ __all__ = ['PretrainedConfig', 'PreTrainedModel', 'PreTrainedTokenizerBase', 'Im
            'SpecialTokensMixin', 'PreTrainedTokenizer', 'PreTrainedTokenizerFast']
 __all__.extend(models.__all__)
 __all__.extend(pipelines.__all__)
+

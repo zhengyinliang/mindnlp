@@ -333,6 +333,7 @@ from .switch_transformers import *
 from .swin2sr import *
 from .tinybert import *
 from .t5 import *
+from .tapas import *
 from .time_series_transformer import *
 from .timesformer import *
 from .videomae import *
@@ -501,6 +502,7 @@ __all__.extend(swin.__all__)
 __all__.extend(switch_transformers.__all__)
 __all__.extend(swin2sr.__all__)
 __all__.extend(t5.__all__)
+__all__.extend(tapas.__all__)
 __all__.extend(time_series_transformer.__all__)
 __all__.extend(timesformer.__all__)
 __all__.extend(tinybert.__all__)
