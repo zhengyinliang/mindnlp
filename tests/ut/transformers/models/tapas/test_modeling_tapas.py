@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 
-from mindnlp.transformers.models.tapas.configuration_tapas import TapasConfig
+from mindnlp.transformers import TapasConfig
 
 
 from mindnlp.transformers import (
