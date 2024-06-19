@@ -19,9 +19,22 @@ import unittest
 import numpy as np
 import pandas as pd
 
+from mindnlp.transformers.models.tapas import TapasTokenizer
+from mindnlp.transformers.models.tapas.configuration_tapas import TapasConfig
+
+from mindnlp.transformers import (
+    MODEL_FOR_CAUSAL_LM_MAPPING,
+    MODEL_FOR_MASKED_LM_MAPPING,
+    MODEL_FOR_MULTIPLE_CHOICE_MAPPING,
+    MODEL_FOR_NEXT_SENTENCE_PREDICTION_MAPPING,
+    MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING,
+    MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING,
+    MODEL_FOR_TABLE_QUESTION_ANSWERING_MAPPING,
+    MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING,
+    is_mindspore_available,
+)
 from mindnlp.transformers.models.auto import get_values
-from mindnlp.transformers.models.tapas import TapasConfig
-from mindnlp.utils.testing_utils import  require_mindspore, slow, is_mindspore_available
+from mindnlp.utils.testing_utils import  require_mindspore, slow
 from mindnlp.utils import cached_property
 
 from ...test_configuration_common import ConfigTester
@@ -37,7 +50,7 @@ if is_mindspore_available():
         TapasForQuestionAnswering,
         TapasForSequenceClassification,
         TapasModel,
-        TapasTokenizer,
+        TapasPreTrainedModel,
     )
     from mindnlp.transformers.models.tapas.modeling_tapas import (
         IndexMap,
@@ -156,6 +169,7 @@ class TapasModelTester:
         for type_vocab_size in self.type_vocab_sizes:
             token_type_ids.append(ids_tensor(shape=[self.batch_size, self.seq_length], vocab_size=type_vocab_size))
         token_type_ids = ops.stack(token_type_ids, dim=2)
+
         sequence_labels = None
         token_labels = None
         labels = None
@@ -263,7 +277,6 @@ class TapasModelTester:
         aggregation_labels,
     ):
         model = TapasForMaskedLM(config=config)
-
         model.set_train(False)
         result = model(input_ids, attention_mask=input_mask, token_type_ids=token_type_ids, labels=token_labels)
         self.parent.assertEqual(result.logits.shape, (self.batch_size, self.seq_length, self.vocab_size))
@@ -287,7 +300,6 @@ class TapasModelTester:
         sqa_config.num_aggregation_labels = 0
         sqa_config.use_answer_as_supervision = False
         model = TapasForQuestionAnswering(config=sqa_config)
-
         model.set_train(False)
         result = model(
             input_ids=input_ids,
@@ -298,7 +310,6 @@ class TapasModelTester:
 
         # inference: with aggregation head (WTQ, WikiSQL-supervised). Model returns logits and aggregation logits
         model = TapasForQuestionAnswering(config=config)
-
         model.set_train(False)
         result = model(
             input_ids=input_ids,
@@ -311,7 +322,6 @@ class TapasModelTester:
         # training: can happen in 3 main ways
         # case 1: conversational (SQA)
         model = TapasForQuestionAnswering(config=sqa_config)
-
         model.set_train(False)
         result = model(
             input_ids,
@@ -324,7 +334,6 @@ class TapasModelTester:
 
         # case 2: weak supervision for aggregation (WTQ)
         model = TapasForQuestionAnswering(config=config)
-
         model.set_train(False)
         result = model(
             input_ids=input_ids,
@@ -394,6 +403,117 @@ class TapasModelTester:
         return config, inputs_dict
 
 
+@require_mindspore
+class TapasModelTest(ModelTesterMixin, unittest.TestCase):
+    all_model_classes = (
+        (
+            TapasForMaskedLM,
+            TapasForQuestionAnswering,
+            TapasForSequenceClassification,
+        )
+        if is_mindspore_available()
+        else None
+    )
+    pipeline_model_mapping = (
+        {
+            "feature-extraction": TapasModel,
+            "fill-mask": TapasForMaskedLM,
+            "table-question-answering": TapasForQuestionAnswering,
+            "text-classification": TapasForSequenceClassification,
+            "zero-shot": TapasForSequenceClassification,
+        }
+        if is_mindspore_available()
+        else {}
+    )
+    test_pruning = False
+    test_resize_embeddings = True
+    test_head_masking = False
+
+    def _prepare_for_class(self, inputs_dict, model_class, return_labels=False):
+        inputs_dict = copy.deepcopy(inputs_dict)
+        if model_class in get_values(MODEL_FOR_MULTIPLE_CHOICE_MAPPING):
+            inputs_dict = {
+                k: v.unsqueeze(1).expand(-1, self.model_tester.num_choices, -1).contiguous()
+                if isinstance(v, ops.Tensor) and v.ndim > 1
+                else v
+                for k, v in inputs_dict.items()
+            }
+
+        if return_labels:
+            if model_class in get_values(MODEL_FOR_MULTIPLE_CHOICE_MAPPING):
+                inputs_dict["labels"] = ops.ones(self.model_tester.batch_size, dtype=ops.long)
+            elif model_class in get_values(MODEL_FOR_TABLE_QUESTION_ANSWERING_MAPPING):
+                inputs_dict["labels"] = ops.zeros(
+                    (self.model_tester.batch_size, self.model_tester.seq_length), dtype=ops.long
+                )
+                inputs_dict["aggregation_labels"] = ops.zeros(
+                    self.model_tester.batch_size, dtype=ops.long
+                )
+                inputs_dict["numeric_values"] = ops.zeros(
+                    (self.model_tester.batch_size, self.model_tester.seq_length),
+                    dtype=ops.float,
+
+                )
+                inputs_dict["numeric_values_scale"] = ops.zeros(
+                    (self.model_tester.batch_size, self.model_tester.seq_length),
+                    dtype=ops.float,
+
+                )
+                inputs_dict["float_answer"] = ops.zeros(
+                    self.model_tester.batch_size, dtype=ops.float
+                )
+            elif model_class in [
+                *get_values(MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING),
+                *get_values(MODEL_FOR_NEXT_SENTENCE_PREDICTION_MAPPING),
+            ]:
+                inputs_dict["labels"] = ops.zeros(
+                    self.model_tester.batch_size, dtype=ops.long
+                )
+            elif model_class in [
+                *get_values(MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING),
+                *get_values(MODEL_FOR_CAUSAL_LM_MAPPING),
+                *get_values(MODEL_FOR_MASKED_LM_MAPPING),
+                *get_values(MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING),
+            ]:
+                inputs_dict["labels"] = ops.zeros(
+                    (self.model_tester.batch_size, self.model_tester.seq_length), dtype=ops.long
+                )
+        return inputs_dict
+
+    # TODO: Fix the failed tests
+    def is_pipeline_test_to_skip(
+        self, pipeline_test_casse_name, config_class, model_architecture, tokenizer_name, processor_name
+    ):
+        return True
+
+    def setUp(self):
+        self.model_tester = TapasModelTester(self)
+        self.config_tester = ConfigTester(self, config_class=TapasConfig, dim=37)
+
+    def test_config(self):
+        self.config_tester.run_common_tests()
+
+    def test_model(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_model(*config_and_inputs)
+
+    def test_for_masked_lm(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_for_masked_lm(*config_and_inputs)
+
+    def test_for_question_answering(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_for_question_answering(*config_and_inputs)
+
+    def test_for_sequence_classification(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_for_sequence_classification(*config_and_inputs)
+
+
+    @unittest.skip("tfp is not defined even if installed. FIXME @Arthur in a followup PR!")
+    def test_tf_from_pt_safetensors(self):
+        pass
+
 
 def prepare_tapas_single_inputs_for_inference():
     # Here we prepare a single table-question pair to test TAPAS inference on:
@@ -437,6 +557,7 @@ def prepare_tapas_batch_inputs_for_training():
     return table, queries, answer_coordinates, answer_text, float_answer
 
 
+@require_mindspore
 class TapasModelIntegrationTest(unittest.TestCase):
     @cached_property
     def default_tokenizer(self):
@@ -452,7 +573,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
         tokenizer = self.default_tokenizer
         table, queries = prepare_tapas_single_inputs_for_inference()
         inputs = tokenizer(table=table, queries=queries, return_tensors="pt")
-        #inputs = {k: v for k, v in inputs.items()}
+        inputs = {k: v for k, v in inputs.items()}
         with ops.no_grad():
             outputs = model(**inputs)
         # test the sequence output
@@ -464,6 +585,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
                     [-0.15169853, -0.603363097, 0.741370678],
                 ]
             ],
+
         )
 
         self.assertTrue(np.allclose(outputs.last_hidden_state[:, :3, :3].asnumpy(), expected_slice.asnumpy(), atol=0.0005))
@@ -490,7 +612,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
         tokenizer = self.default_tokenizer
         table, queries = prepare_tapas_single_inputs_for_inference()
         inputs = tokenizer(table=table, queries=queries, return_tensors="pt")
-        #inputs = {k: v for k, v in inputs.items()}
+        inputs = {k: v for k, v in inputs.items()}
         with ops.no_grad():
             outputs = model(**inputs)
         # test the logits
@@ -524,6 +646,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
                     -10004.8506,
                 ]
             ],
+
         )
 
         self.assertTrue(np.allclose(logits.asnumpy(), expected_tensor.asnumpy(), atol=0.015))
@@ -537,6 +660,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
         tokenizer = self.default_tokenizer
         table, queries = prepare_tapas_single_inputs_for_inference()
         inputs = tokenizer(table=table, queries=queries, return_tensors="pt")
+        inputs = {k: v for k, v in inputs.items()}
         with ops.no_grad():
             outputs = model(**inputs)
         # test the logits
@@ -570,6 +694,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
                     -10013.4736,
                 ]
             ],
+
         )
 
         self.assertTrue(np.allclose(logits.asnumpy(), expected_tensor.asnumpy(), atol=0.01))
@@ -583,9 +708,10 @@ class TapasModelIntegrationTest(unittest.TestCase):
         # let's test on a batch
         table, queries = prepare_tapas_batch_inputs_for_inference()
         inputs = tokenizer(table=table, queries=queries, padding="longest", return_tensors="pt")
+        inputs_on_device = {k: v for k, v in inputs.items()}
 
         with ops.no_grad():
-            outputs = model(**inputs)
+            outputs = model(**inputs_on_device)
         # test the logits
         logits = outputs.logits
         expected_shape = ops.Size((2, 28))
@@ -596,6 +722,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
                 [-160.375504, -160.375504, -160.375504, -10072.3965, -10070.9414, -10094.9736],
                 [-9861.6123, -9861.6123, -9861.6123, -9861.6123, -9891.01172, 146.600677],
             ],
+
         )
 
         self.assertTrue(np.allclose(logits[:, -6:].asnumpy(), expected_slice.asnumpy(), atol=0.4))
@@ -606,6 +733,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
         self.assertEqual(logits_aggregation.shape, expected_shape)
         expected_tensor = ops.tensor(
             [[18.8545208, -9.76614857, -6.3128891, -2.93525243], [-4.05782509, 40.0351, -5.35329962, 23.3978653]],
+
         )
 
         self.assertTrue(np.allclose(logits_aggregation.asnumpy(), expected_tensor.asnumpy(), atol=0.001))
@@ -683,6 +811,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
                 -10092.6006,
                 -10092.6006,
             ],
+
         )
 
         self.assertTrue(np.allclose(logits[0, -9:].asnumpy(), expected_slice.asnumpy(), atol=1e-6))
@@ -703,6 +832,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
         tokenizer = self.default_tokenizer
         table, queries = prepare_tapas_single_inputs_for_inference()
         inputs = tokenizer(table=table, queries=queries, return_tensors="pt")
+        inputs = {k: v for k, v in inputs.items()}
         with ops.no_grad():
             outputs = model(**inputs)
         # test the logits
@@ -735,6 +865,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
                     -10007.0977,
                 ]
             ],
+
         )
 
         self.assertTrue(np.allclose(logits.asnumpy(), expected_tensor.asnumpy(), atol=0.02))
@@ -757,6 +888,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
         tokenizer = self.default_tokenizer
         table, queries = prepare_tapas_single_inputs_for_inference()
         inputs = tokenizer(table=table, queries=queries, padding="longest", return_tensors="pt")
+        inputs = {k: v for k, v in inputs.items()}
         with ops.no_grad():
             outputs = model(**inputs)
 
@@ -774,6 +906,7 @@ class TapasModelIntegrationTest(unittest.TestCase):
 # Below: tests for Tapas utilities which are defined in modeling_tapas.py.
 # These are based on segmented_tensor_test.py of the original implementation.
 # URL: https://github.com/google-research/tapas/blob/master/tapas/models/segmented_tensor_test.py
+@require_mindspore
 class TapasUtilitiesTest(unittest.TestCase):
     def _prepare_tables(self):
         """Prepares two tables, both with three distinct rows.
