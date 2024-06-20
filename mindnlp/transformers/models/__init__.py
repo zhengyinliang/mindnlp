@@ -163,6 +163,7 @@ from . import (
     switch_transformers,
     swin2sr,
     t5,
+    tapas,
     time_series_transformer,
     timesformer,
     tinybert,

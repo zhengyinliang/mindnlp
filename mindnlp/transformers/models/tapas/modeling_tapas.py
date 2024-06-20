@@ -44,7 +44,6 @@ from mindnlp.utils import (
 )
 from .configuration_tapas import TapasConfig
 
-
 logger = logging.get_logger(__name__)
 
 # if not is_torch_greater_or_equal_than_1_12:
